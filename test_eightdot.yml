@@ -1,0 +1,240 @@
+### Elasticsearch Installation
+# Prepare Elasticsearch Installation
+---
+- name: Installing Elasticsearch on Single Node
+  hosts: Test
+  order: sorted
+  serial: 1
+  become: true
+  become_method: sudo
+  tasks:
+    - name: Installing Elasticsearch in SingleNode
+      shell: apt update  && apt install -y elasticsearch
+    - name: Create Directory for Data and Log Path
+      shell: mkdir -p /elasticsearch/elasticsearch && mkdir -p /elasticsearch/elasticsearch_logs && chown -R elasticsearch:elasticsearch /elasticsearch/elasticsearch && chown -R elasticsearch:elasticsearch /elasticsearch/elasticsearch_logs && chmod -R 775 /elasticsearch/ && chmod -R 775 /elasticsearch/elasticsearch_logs
+    - name: creating elastic ca certificate 
+      shell: /usr/share/elasticsearch/bin/elasticsearch-certutil ca --out /etc/elasticsearch/ca --pass {{ elastic_ca_pass }}
+    - name: Create Specific Cert for currently located server
+      shell: /usr/share/elasticsearch/bin/elasticsearch-certutil cert --ca /etc/elasticsearch/ca --ca-pass {{ elastic_ca_pass }} --name {{ ansible_hostname }} --dns {{ ansible_hostname }}.fw.dteknoloji.com.tr --ip {{ ansible_host }} --out /etc/elasticsearch/{{ ansible_hostname }} --pass '{{ test_password }}'
+    - name: Chown of keystore and cert
+      shell: chown -R root:root /etc/elasticsearch/elasticsearch.keystore && chmod 640 /etc/elasticsearch/{{ ansible_hostname }}
+    - name: Case insensitive password string match
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-keystore add xpack.security.transport.ssl.keystore.secure_password
+        responses:
+          Setting xpack\.security\.transport\.ssl\.keystore\.secure_password already exists\. Overwrite\? \[y\/N\]: 'y'
+          Enter value for xpack\.security\.transport\.ssl\.keystore\.secure_password: '{{ test_password }}'
+        echo: yes
+
+    - name: Case insensitive password string match
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-keystore add xpack.security.transport.ssl.truststore.secure_password
+        responses:
+          Setting xpack\.security\.transport\.ssl\.truststore\.secure_password already exists\. Overwrite\? \[y\/N\]: 'y'
+          Enter value for xpack\.security\.transport\.ssl\.truststore\.secure_password: '{{ test_password }}'
+        echo: yes
+    - name: Chown of keystore and cert
+      shell: chown -R elasticsearch:elasticsearch /etc/elasticsearch/elasticsearch.keystore && chmod 640 /etc/elasticsearch/{{ ansible_hostname }}
+    - name: Change Elasticsearch Config File
+      shell:
+        cmd: |
+          cat > /etc/elasticsearch/elasticsearch.yml << EOF
+          cluster.name : {{ cluster_name }}
+          node.name : {{ ansible_hostname }}
+
+          path.data: /elasticsearch/elasticsearch
+          path.logs: /elasticsearch/elasticsearch_logs
+          network.host: {{ ansible_host }}
+          http.port: 9200
+
+          cluster.initial_master_nodes: {{ ansible_host }}
+
+          xpack.security.enabled: true
+          xpack.security.transport.ssl.enabled: true
+          xpack.security.http.ssl.enabled: false
+          xpack.security.transport.ssl.verification_mode: "certificate"
+          xpack.security.transport.ssl.keystore.path: /etc/elasticsearch/{{ ansible_hostname }}
+          xpack.security.transport.ssl.truststore.path: /etc/elasticsearch/{{ ansible_hostname }}
+          EOF
+
+    - name: Starting Elasticsearch
+      shell: systemctl start elasticsearch.service && systemctl enable elasticsearch.service
+    - name: Installing Kibana on Test Server
+      shell: apt install -y kibana && systemctl daemon-reload && systemctl start kibana.service && systemctl enable kibana.service
+    - name:  Create data and log paths for Kibana 
+      shell: mkdir -p /elasticsearch/kibana_log && chown -R kibana:kibana /elasticsearch/kibana_log && mkdir -p /elasticsearch/kibana && chown -R kibana:kibana /elasticsearch/kibana && chmod -R 775 /elasticsearch/kibana_log && chmod -R 775 /elasticsearch/kibana
+    - name: Changing of Config file Kibana
+      shell:
+        cmd: |
+              cat > /etc/kibana/kibana.yml << EOF
+              server.port: 5601
+              server.host: {{ ansible_host }}
+              server.name: {{ ansible_hostname }}
+              elasticsearch.hosts: ["http://{{ ansible_host }}:9200"]
+              elasticsearch.username: "kibana_system"
+              elasticsearch.password: "{{ test_password }}"
+              elasticsearch.ssl.verificationMode: none
+              server.publicBaseUrl: "http://{{ ansible_host }}:5601"
+              path.data: /elasticsearch/kibana
+              pid.file: /run/kibana/kibana.pid
+              logging:
+                appenders:
+                  file:
+                    type: file
+                    fileName: /elasticsearch/kibana_log/kibana.log
+                    layout:
+                      type: pattern
+                      pattern: "[%date] [%level] [%logger] [%meta] %message"
+                root:
+                  appenders: [default, file]
+              EOF
+
+    - name: Restart Kibana
+      shell: systemctl restart kibana.service
+    - name: Creating elastic user 
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i -b
+        responses:
+          Enter password for \[elastic\]: '{{ test_password }}'
+          Re-enter password for \[elastic\]: '{{ test_password }}'
+        echo: yes
+        timeout: 15
+    - name: Creating elastic user 
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system -i -b
+        responses:
+          Enter password for \[kibana\_system\]: '{{ test_password }}'
+          Re-enter password for \[kibana\_system\]: '{{ test_password }}'
+        echo: yes
+        timeout: 15
+    - name: Creating elastic user 
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u logstash_system -i -b
+        responses:
+          Enter password for \[logstash\_system\]: '{{ test_password }}'
+          Re-enter password for \[logstash\_system\]: '{{ test_password }}'
+        echo: yes
+        timeout: 15
+    - name: Creating elastic user 
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u beats_system -i -b
+        responses:
+          Enter password for \[beats\_system\]: '{{ test_password }}'
+          Re-enter password for \[beats\_system\]: '{{ test_password }}'
+        echo: yes
+        timeout: 15
+    - name: Creating elastic user 
+      expect:
+        command: /usr/share/elasticsearch/bin/elasticsearch-reset-password -u remote_monitoring_user -i -b
+        responses:
+          Enter password for \[remote\_monitoring\_user\]: '{{ test_password }}'
+          Re-enter password for \[remote\_monitoring\_user\]: '{{ test_password }}'
+        echo: yes
+        timeout: 15
+
+    - name: Add apt-repository and install elasticsearch-curator
+      shell: apt install -y elasticsearch-curator
+
+    - name: Create Log and Data Path for Curator
+      shell: mkdir -p /elasticsearch/curator_logs
+
+    - name: Create Directory for Curator yaml
+      shell: mkdir -p /opt/curator
+    - name: Change Curator Config File
+      shell:
+        cmd: |
+          cat > /opt/curator/action.yaml << EOF
+          actions:
+            1:
+              action: delete_indices
+              description: >-
+                . ile baslayanlar haric tum indisleri silen action
+              options:
+                ignore_empty_list: True
+                timeout_override:
+                continue_if_exception: True
+                disable_action: False
+              filters:
+                - filtertype: pattern
+                  kind: regex
+                  value: ^[.]
+                  exclude: True
+                - filtertype: age
+                  source: creation_date
+                  direction: older
+                  #timestring: '%Y.%m.%d'
+                  unit: days
+                  unit_count: 15
+                  exclude:
+            2:
+              action: delete_indices
+              description: >-
+                .monitoring ile baslayan indisleri silen action
+              options:
+                ignore_empty_list: True
+                timeout_override:
+                continue_if_exception: True
+                disable_action: False
+              filters:
+                - filtertype: pattern
+                  kind: prefix
+                  value: .monitoring-
+                  exclude:
+                - filtertype: age
+                  source: creation_date
+                  direction: older
+                  #timestring: '%Y.%m.%d'
+                  unit: days
+                  unit_count: 15
+                  exclude:
+          EOF
+
+    - name: Change Curator Config File
+      shell:
+        cmd: |
+          cat > /opt/curator/curator.yaml << EOF
+          client:
+            hosts:
+              - {{ ansible_host }}
+            port: 9200
+            url_prefix:
+            ssl_no_validate: False
+            username: elastic
+            password: {{ test_password }}
+            timeout: 30
+            master_only: False
+
+          logging:
+            loglevel: INFO
+            logfile:
+            logformat: default
+
+            blacklist: ['elasticsearch', 'urllib3']
+          EOF
+
+    - name: Config Cronjob for Curator
+      cron:
+        name: "curator"
+        minute: "08"
+        hour: "10"
+        job: curator --config /opt/curator/curator.yaml /opt/curator/action.yaml > /elasticsearch/curator_logs/curator_logfile_$(date +'%Y-%m-%d').log
+    - name: Config Cronjob for Elasticsearch
+      cron:
+        name: "elasticsearch"
+        minute: "08"
+        hour: "10"
+        job: find /elasticsearch/elasticsearch_logs/ -name "{{ cluster_name }}-*" -type f -mtime +30 -exec rm -rf {} \;
+
+    - name: Config Cronjob for Elasticsearch
+      cron:
+        name: "logstash"
+        minute: "08"
+        hour: "10"
+        job: find /elasticsearch/logstash/logs/ -name "logstash-*.log" -type f -mtime +30 -exec rm -rf {} \;
+
+    - name: Config Cronjob for Elasticsearch
+      cron:
+        name: "Curator_logs"
+        minute: "08"
+        hour: "10"
+        job: find /elasticsearch/curator_logs/ -name "curator_logfile_*" -type f -mtime +30 -exec rm -rf {} \;

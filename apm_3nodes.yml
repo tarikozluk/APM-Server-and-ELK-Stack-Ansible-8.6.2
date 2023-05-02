@@ -1,0 +1,72 @@
+---
+- name: Installing APM on 3 Nodes
+  hosts: Prod[0:2]
+  order: sorted
+  serial: 1
+  become: true
+  become_method: sudo
+  tasks:
+    - name: Installing APM-Server in SingleNode
+      shell: apt update  && apt install -y apm-server
+    - name: Creating Folders
+      shell: mkdir -p /elasticsearch/apm-server/ && chown apm-server:apm-server /elasticsearch/apm-server/
+    - name: Configuration APM-Server yml file
+      shell:
+        cmd: |
+          cat > /etc/apm-server/apm-server.yml << EOF
+          apm-server:
+            host: "{{ ansible_host }}:8200"
+            rum:
+              enabled: true
+            kibana:
+              enabled: true
+              host: "http://{{ ansible_host }}:5601"
+              username: "{{ elastic_specified_user }}"
+              password: "{{ apm_password }}"
+            index:
+              number_of_shards: 1
+              codec: best_compression
+              mapping.total_fields.limit: 4000
+          output.elasticsearch:
+            hosts: ["http://{{ ansible_host }}:9200"]
+            protocol: "http"
+            username: "{{ elastic_specified_user }}"
+            password: "{{ apm_password }}"
+            indices:
+              - index: "apm-%{[observer.version]}-sourcemap"
+                when.contains:
+                  processor.event: "sourcemap"
+
+              - index: "apm-%{[observer.version]}-error-%{+yyyy.MM.dd}"
+                when.contains:
+                  processor.event: "error"
+
+              - index: "apm-%{[observer.version]}-transaction-%{+yyyy.MM.dd}"
+                when.contains:
+                  processor.event: "transaction"
+
+              - index: "apm-%{[observer.version]}-span-%{+yyyy.MM.dd}"
+                when.contains:
+                  processor.event: "span"
+
+              - index: "apm-%{[observer.version]}-metric-%{+yyyy.MM.dd}"
+                when.contains:
+                  processor.event: "metric"
+
+              - index: "apm-%{[observer.version]}-onboarding-%{+yyyy.MM.dd}"
+                when.contains:
+                  processor.event: "onboarding"
+
+          path.data: /elasticsearch/apm-server
+          logging.level: info
+          logging.selectors: "*"
+          logging.to_files: true
+          logging.files:
+            path: /elasticsearch/apm-server
+            name: apm-server
+            keepfiles: 7
+            interval: 24h
+
+          EOF
+    - name: Restarting and Enabling APM-Server
+      shell: systemctl restart apm-server && systemctl enable apm-server
